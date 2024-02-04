@@ -1,7 +1,7 @@
 const express = require("express");
 // const http = require("http");
 // const { Server } = require("socket.io");
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 require("dotenv").config();
 const app = express();
 const cors = require("cors");
@@ -64,11 +64,217 @@ async function run() {
       res.send(result);
     });
 
+    app.get("/users/:id", async (req, res) => {
+      const id = req.params.id;
+      const filter = { _id: new ObjectId(id) };
+      const user = await userCollection.findOne(filter);
+      res.send(user);
+    });
+
+    app.get("/user/all-requests", async (req, res) => {
+      const email = req.query?.email;
+      const filter = { email: email };
+      const user = await userCollection.findOne(filter);
+      const friends = user?.friends?.filter(
+        (friend) => friend?.sender !== true && friend.status !== "confirmed" && friend.status !== 'canceled'
+      );
+      res.send(friends);
+    });
+
+    app.get("/users-by-name", async (req, res) => {
+      const name = req.query?.name;
+      let filter = {};
+      if (name && name?.length > 0) {
+        filter = { name: { $regex: new RegExp(name, "i") } };
+        const userWithMatchedName = await userCollection.find(filter).toArray();
+        // console.log(userWithMatchedName);
+        return res.send(userWithMatchedName);
+      } else {
+        return;
+      }
+    });
+
     app.post("/users", async (req, res) => {
       const user = req.body;
       // console.log(user);
       const result = await userCollection.insertOne(user);
       res.send(result);
+    });
+
+    app.patch("/user/add-friend", async (req, res) => {
+      const { currentEmail, userInfo } = req.body;
+      const requesterFilter = { email: currentEmail };
+      const userFilter = { email: userInfo?.email };
+      const requester = await userCollection.findOne(requesterFilter);
+      const user = await userCollection.findOne(userFilter);
+      // console.log(userInfo, user);
+
+      if (user && requester) {
+        if (!requester.friends) {
+          requester.friends = [];
+        }
+        if (!user.friends) {
+          user.friends = [];
+        }
+        requester.friends.push({
+          _id: user._id,
+          name: user.name,
+          email: user.email,
+          photo: user.photo,
+          sender: true,
+          status: "pending",
+        });
+        user.friends.push({
+          _id: requester._id,
+          name: requester.name,
+          email: requester.email,
+          photo: requester.photo,
+          status: "pending",
+        });
+        const requesterUpdatedDoc = {
+          $set: {
+            friends: requester.friends,
+          },
+        };
+        const userUpdatedDoc = {
+          $set: {
+            friends: user.friends,
+          },
+        };
+        const updateRequester = await userCollection.updateOne(
+          requesterFilter,
+          requesterUpdatedDoc
+        );
+        const updateUser = await userCollection.updateOne(
+          userFilter,
+          userUpdatedDoc
+        );
+        res.status(200).send({ requestSend: "successfull" });
+      }
+    });
+
+    app.patch("/user/status", async (req, res) => {
+      const { currentEmail, targetedEmail, status } = req.body;
+      const currentEmailFilter = { email: currentEmail };
+      const targetedEmailFilter = { email: targetedEmail };
+
+      const currentUser = await userCollection.findOne(currentEmailFilter);
+      const targetedUser = await userCollection.findOne(targetedEmailFilter);
+
+      if (currentUser && targetedUser) {
+        const currentUserFriends = currentUser.friends;
+        const targetedUserFriends = targetedUser.friends;
+
+        if (status === "confirm") {
+          const updatedCurrentUserFriends = currentUserFriends.map((friend) => {
+            if (friend.email === targetedUser.email) {
+              return { ...friend, status: "confirmed" };
+            } else {
+              return friend;
+            }
+          });
+
+          const updatedTargetedUserFriends = targetedUserFriends.map(
+            (friend) => {
+              if (friend.email === currentUser.email) {
+                return { ...friend, status: "confirmed" };
+              } else {
+                return friend;
+              }
+            }
+          );
+
+          const currentUserUpdatedDoc = {
+            $set: {
+              friends: updatedCurrentUserFriends,
+            },
+          };
+          const targetedUserUpdatedDoc = {
+            $set: {
+              friends: updatedTargetedUserFriends,
+            },
+          };
+
+          const updateCurrentUserStatus = await userCollection.updateOne(
+            currentEmailFilter,
+            currentUserUpdatedDoc
+          );
+
+          const updateTargetedUserStatus = await userCollection.updateOne(
+            targetedEmailFilter,
+            targetedUserUpdatedDoc
+          );
+
+          return res.send({
+            updateCurrentUserStatus,
+            updateTargetedUserStatus,
+          });
+        } else if (status === "cancel") {
+          const updatedCurrentUserFriends = currentUserFriends.map((friend) => {
+            if (friend.email === targetedUser.email) {
+              return { ...friend, status: "canceled" };
+            } else {
+              return friend;
+            }
+          });
+
+          const updatedTargetedUserFriends = targetedUserFriends.map(
+            (friend) => {
+              if (friend.email === currentUser.email) {
+                return { ...friend, status: "canceled" };
+              } else {
+                return friend;
+              }
+            }
+          );
+
+          const currentUserUpdatedDoc = {
+            $set: {
+              friends: updatedCurrentUserFriends,
+            },
+          };
+          const targetedUserUpdatedDoc = {
+            $set: {
+              friends: updatedTargetedUserFriends,
+            },
+          };
+
+          const updateCurrentUserStatus = await userCollection.updateOne(
+            currentEmailFilter,
+            currentUserUpdatedDoc
+          );
+
+          const updateTargetedUserStatus = await userCollection.updateOne(
+            targetedEmailFilter,
+            targetedUserUpdatedDoc
+          );
+
+          return res.send({
+            updateCurrentUserStatus,
+            updateTargetedUserStatus,
+          });
+        }
+      }
+
+      // if (status === "confirm") {
+      //   const updatedDoc = {
+      //     $set: {
+      //       status: "confirmed",
+      //     },
+      //   };
+      //   const updateCurrentUserStatus = await userCollection.updateOne(
+      //     currentEmailFilter,
+      //     updatedDoc
+      //   );
+      // } else if (status === "cancel") {
+      //   const updatedDoc = {
+      //     $set: {
+      //       status: "canceled",
+      //     },
+      //   };
+      // }
+
+      console.log(currentUser.friends.status, targetedUser.friends.status);
     });
 
     app.patch("/users", async (req, res) => {
@@ -91,14 +297,30 @@ async function run() {
     });
 
     // chats api
+    app.get("/chats", async (req, res) => {
+      const from = req.query.from;
+      const to = req.query.to;
+      const senderFilter = { from, to };
+      const receiverFilter = { from: to, to: from };
+      const combinedFilter = {
+        $or: [
+          { from, to },
+          { from: to, to: from },
+        ],
+      };
+      // const senderChatData = await chatCollection.find(senderFilter).toArray();
+      const chatData = await chatCollection.find(combinedFilter).toArray();
+      // console.log(receiverChatData);
+      // res.send({senderChatData, receiverChatData});
+      res.send(chatData);
+    });
+
     app.post("/chats", async (req, res) => {
       const message = req.body;
       const result = await chatCollection.insertOne(message);
       res.send(result);
     });
 
-    // Send a ping to confirm a successful connection
-    // await client.db("admin").command({ ping: 1 });
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!"
     );
