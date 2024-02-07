@@ -1,20 +1,10 @@
 const express = require("express");
-// const http = require("http");
-// const { Server } = require("socket.io");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 require("dotenv").config();
 const app = express();
 const cors = require("cors");
 const port = process.env.PORT || 5000;
 
-// const server = http.createServer(app);
-// const io = new Server(server, {
-//   cors: {
-//     origin: "http://localhost:5173",
-//     methods: ["GET", "POST"],
-//     credentials: true,
-//   },
-// });
 
 //middleware
 app.use(
@@ -25,19 +15,7 @@ app.use(
 );
 app.use(express.json());
 
-// io.on("connection", (socket) => {
-//   console.log("User connected");
 
-//   // handle message
-//   socket.on("chat message", (msg) => {
-//     io.emit("chat message", msg);
-//   });
-
-//   // handle disconnection
-//   socket.on("disconnect", () => {
-//     console.log("user diconnected");
-//   });
-// });
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.jq69c8i.mongodb.net/?retryWrites=true&w=majority`;
 
@@ -59,13 +37,40 @@ async function run() {
     const chatCollection = client.db("Quick-Chat").collection("chats");
 
     // users api
-    app.get("/users", async (req, res) => {
-      const result = await userCollection.find().toArray();
-      res.send(result);
+    app.get("/users/friends", async (req, res) => {
+      const currentEmail = req.query.email;
+      const message = req.query.message;
+      const emailFilter = { email: currentEmail };
+      const user = await userCollection.findOne(emailFilter);
+
+      if (currentEmail && message) {
+        if (user?.friends) {
+          const lastChats = [];
+          for (const friend of user.friends) {
+            if (friend?.email) {
+              const targetedEmail = friend?.email;
+              const combinedFilter = {
+                $or: [
+                  { from: currentEmail, to: targetedEmail },
+                  { from: targetedEmail, to: currentEmail },
+                ],
+              };
+              const chatData = await chatCollection
+                .find(combinedFilter)
+                .toArray();
+              const lastContent = chatData.slice(-1)[0].content;
+              lastChats.push(lastContent);
+            }
+          }
+          return res.send({ friends: user?.friends, lastChats });
+        }
+      }
+      res.send({ friends: user?.friends });
     });
 
-    app.get("/users/:id", async (req, res) => {
+    app.get("/get-user-by/:id", async (req, res) => {
       const id = req.params.id;
+      // console.log(id);
       const filter = { _id: new ObjectId(id) };
       const user = await userCollection.findOne(filter);
       res.send(user);
@@ -76,7 +81,10 @@ async function run() {
       const filter = { email: email };
       const user = await userCollection.findOne(filter);
       const friends = user?.friends?.filter(
-        (friend) => friend?.sender !== true && friend.status !== "confirmed" && friend.status !== 'canceled'
+        (friend) =>
+          friend?.sender !== true &&
+          friend.status !== "confirm" &&
+          friend.status !== "cancel"
       );
       res.send(friends);
     });
@@ -155,6 +163,7 @@ async function run() {
 
     app.patch("/user/status", async (req, res) => {
       const { currentEmail, targetedEmail, status } = req.body;
+      // console.log(req.body);
       const currentEmailFilter = { email: currentEmail };
       const targetedEmailFilter = { email: targetedEmail };
 
@@ -165,10 +174,10 @@ async function run() {
         const currentUserFriends = currentUser.friends;
         const targetedUserFriends = targetedUser.friends;
 
-        if (status === "confirm") {
+        if (status) {
           const updatedCurrentUserFriends = currentUserFriends.map((friend) => {
             if (friend.email === targetedUser.email) {
-              return { ...friend, status: "confirmed" };
+              return { ...friend, status: status };
             } else {
               return friend;
             }
@@ -177,51 +186,7 @@ async function run() {
           const updatedTargetedUserFriends = targetedUserFriends.map(
             (friend) => {
               if (friend.email === currentUser.email) {
-                return { ...friend, status: "confirmed" };
-              } else {
-                return friend;
-              }
-            }
-          );
-
-          const currentUserUpdatedDoc = {
-            $set: {
-              friends: updatedCurrentUserFriends,
-            },
-          };
-          const targetedUserUpdatedDoc = {
-            $set: {
-              friends: updatedTargetedUserFriends,
-            },
-          };
-
-          const updateCurrentUserStatus = await userCollection.updateOne(
-            currentEmailFilter,
-            currentUserUpdatedDoc
-          );
-
-          const updateTargetedUserStatus = await userCollection.updateOne(
-            targetedEmailFilter,
-            targetedUserUpdatedDoc
-          );
-
-          return res.send({
-            updateCurrentUserStatus,
-            updateTargetedUserStatus,
-          });
-        } else if (status === "cancel") {
-          const updatedCurrentUserFriends = currentUserFriends.map((friend) => {
-            if (friend.email === targetedUser.email) {
-              return { ...friend, status: "canceled" };
-            } else {
-              return friend;
-            }
-          });
-
-          const updatedTargetedUserFriends = targetedUserFriends.map(
-            (friend) => {
-              if (friend.email === currentUser.email) {
-                return { ...friend, status: "canceled" };
+                return { ...friend, status: status };
               } else {
                 return friend;
               }
@@ -256,25 +221,7 @@ async function run() {
         }
       }
 
-      // if (status === "confirm") {
-      //   const updatedDoc = {
-      //     $set: {
-      //       status: "confirmed",
-      //     },
-      //   };
-      //   const updateCurrentUserStatus = await userCollection.updateOne(
-      //     currentEmailFilter,
-      //     updatedDoc
-      //   );
-      // } else if (status === "cancel") {
-      //   const updatedDoc = {
-      //     $set: {
-      //       status: "canceled",
-      //     },
-      //   };
-      // }
-
-      console.log(currentUser.friends.status, targetedUser.friends.status);
+      // console.log(currentUser.friends.status, targetedUser.friends.status);
     });
 
     app.patch("/users", async (req, res) => {
