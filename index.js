@@ -5,17 +5,18 @@ const app = express();
 const cors = require("cors");
 const port = process.env.PORT || 5000;
 
-
 //middleware
 app.use(
   cors({
-    origin: ["http://localhost:5173"],
+    origin: [
+      "http://localhost:5173",
+      "https://quick-chat-3080f.web.app",
+      "https://quick-chat-3080f.firebaseapp.com",
+    ],
     credentials: true,
   })
 );
 app.use(express.json());
-
-
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.jq69c8i.mongodb.net/?retryWrites=true&w=majority`;
 
@@ -47,7 +48,8 @@ async function run() {
         if (user?.friends) {
           const lastChats = [];
           for (const friend of user.friends) {
-            if (friend?.email) {
+            // console.log(friend);
+            if (friend?.email && friend?.status === "confirm") {
               const targetedEmail = friend?.email;
               const combinedFilter = {
                 $or: [
@@ -58,8 +60,10 @@ async function run() {
               const chatData = await chatCollection
                 .find(combinedFilter)
                 .toArray();
-              const lastContent = chatData.slice(-1)[0].content;
+              const lastContent = chatData.slice(-1)[0]?.content;
               lastChats.push(lastContent);
+            } else {
+              return res.send({ friends: {}, lastChats });
             }
           }
           return res.send({ friends: user?.friends, lastChats });
@@ -73,6 +77,13 @@ async function run() {
       // console.log(id);
       const filter = { _id: new ObjectId(id) };
       const user = await userCollection.findOne(filter);
+      res.send(user);
+    });
+
+    app.get("/single-user/email", async (req, res) => {
+      // console.log(req.query.email);
+      const emailFilter = { email: req.query.email };
+      const user = await userCollection.findOne(emailFilter);
       res.send(user);
     });
 
@@ -226,6 +237,20 @@ async function run() {
 
     app.patch("/users", async (req, res) => {
       const { displayName, photoURL, email } = req.body;
+      const { name, email: emailForUpdate, photo } = req.body;
+
+      if (name && emailForUpdate && photo) {
+        const filter = { email: emailForUpdate };
+        const updatedDoc = {
+          $set: {
+            name,
+            email: emailForUpdate,
+            photo,
+          },
+        };
+        const updateUser = await userCollection.updateOne(filter, updatedDoc);
+        return res.send(updateUser);
+      }
       const filter = { email: email };
       const options = { upsert: true };
       const updatedDoc = {
